@@ -56,7 +56,7 @@ h3 { margin: 0; font-size: 10px; font-weight: 600; letter-spacing: .07em; text-t
 .account-actions button { border: 1px solid #ffffff25; border-radius: 4px; padding: 3px 5px; background: #ffffff09; color: #c3d2e8; cursor: pointer; font-size: 10px; }
 .account-actions button:disabled { opacity: .4; cursor: default; }
 .connection-note { font-size: 9px; line-height: 12px; color: #8996a9; margin: 5px 0 0; }
-.connection-error { font-size: 10px; line-height: 13px; color: #deb99b; margin: 5px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.connection-error { font-size: 10px; line-height: 13px; color: #deb99b; margin: 5px 0 0; overflow-wrap: anywhere; user-select: text; }
 .provider { position: relative; min-width: 0; background: #ffffff04; border: 1px solid #ffffff10; padding: 6px 9px 6px 11px; border-radius: 8px; }
 .provider::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px; border-radius: 0 2px 2px 0; background: var(--accent); opacity: .75; }
 .provider.saved::before { opacity: .3; }
@@ -82,7 +82,8 @@ h2 { font-size: 11px; font-weight: 600; margin: 0; min-width: 0; overflow: hidde
 .reading-meta { margin-top: 2px; display: flex; justify-content: space-between; gap: 6px; font-size: 9px; line-height: 10px; color: #738196; }
 .reading-meta.stale { color: #c0a778; }
 .used-label { color: #738196; }
-.error-message { margin: 5px 0 0; color: #deb99b; font-size: 10px; line-height: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.error-message { margin: 5px 0 0; color: #deb99b; font-size: 10px; line-height: 13px; overflow-wrap: anywhere; user-select: text; }
+.compact .error-message { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .empty-state { color: #8996a9; font-size: 11px; margin: 9px 0; }
 button:focus-visible { outline: 2px solid #529dff; outline-offset: 2px; }
 .spin { animation: spin 1.2s linear infinite; }

@@ -67,8 +67,11 @@ pub(crate) fn find(
         return Some(path);
     }
     let binary = executable_name(name);
-    let mut candidates: Vec<_> = std::fs::read_dir(home()?.join(".vscode/extensions"))
-        .into_iter()
+    let home = home()?;
+    // The same extensions install into VS Code forks too.
+    let mut candidates: Vec<_> = [".vscode", ".vscode-insiders", ".cursor", ".windsurf"]
+        .iter()
+        .filter_map(|editor| std::fs::read_dir(home.join(editor).join("extensions")).ok())
         .flatten()
         .filter_map(Result::ok)
         .filter(|entry| {

@@ -49,7 +49,7 @@ fn signed_in_email(status: &Value) -> Option<String> {
 fn read_account() -> Result<Option<String>, String> {
     let output = command(&["auth", "status", "--json"])?
         .output()
-        .map_err(|_| "Could not start the installed Claude Code CLI.".to_string())?;
+        .map_err(|error| format!("Could not start Claude Code: {error}"))?;
     // A signed-out CLI may exit with an error but still reports its status as JSON.
     let status: Value = serde_json::from_slice(&output.stdout)
         .map_err(|_| "Claude Code returned an unreadable sign-in status.".to_string())?;
@@ -71,7 +71,7 @@ pub(crate) async fn claude_logout(expected_email: String) -> Result<(), String> 
         }
         command(&["auth", "logout"])?
             .output()
-            .map_err(|_| "Could not start the installed Claude Code CLI.".to_string())?;
+            .map_err(|error| format!("Could not start Claude Code: {error}"))?;
         if read_account()?.is_some() {
             return Err("Claude Code is still signed in. Try disconnecting again.".into());
         }
@@ -154,7 +154,7 @@ fn start_login(state: &Arc<Mutex<Option<Login>>>) -> Result<LoginStart, String> 
         .stdin(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|_| "Could not start the installed Claude Code CLI.".to_string())?;
+        .map_err(|error| format!("Could not start Claude Code: {error}"))?;
     let (sender, receiver) = mpsc::channel();
     forward_lines(child.stdout.take().ok_or("Could not connect to Claude Code.")?, sender.clone());
     forward_lines(child.stderr.take().ok_or("Could not connect to Claude Code.")?, sender);

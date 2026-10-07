@@ -116,7 +116,8 @@ fn parse_usage(account: &Value, result: &Value) -> Result<ProviderUsage, String>
 }
 
 fn start_server() -> Result<(Server, Receiver<Value>), String> {
-    let mut command = Command::new(executable()?);
+    let path = executable()?;
+    let mut command = Command::new(&path);
     command
         .arg("app-server")
         .stdin(Stdio::piped())
@@ -133,7 +134,7 @@ fn start_server() -> Result<(Server, Receiver<Value>), String> {
     let mut server = Server(
         command
             .spawn()
-            .map_err(|_| "Could not start the installed Codex app server.".to_string())?,
+            .map_err(|error| format!("Could not start Codex ({}): {error}", path.display()))?,
     );
     let stdout = server
         .0
@@ -151,12 +152,22 @@ fn start_server() -> Result<(Server, Receiver<Value>), String> {
         }
     });
     let deadline = Instant::now() + Duration::from_secs(25);
-    send(
+    let initialized = send(
         &mut server,
         json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"usage_widget","version":"0.1.0"}}}),
-    )?;
-    response(&receiver, 1, deadline)?;
-    send(&mut server, json!({"method":"initialized","params":{}}))?;
+    )
+    .and_then(|_| response(&receiver, 1, deadline))
+    .and_then(|_| send(&mut server, json!({"method":"initialized","params":{}})));
+    if let Err(error) = initialized {
+        // Old Codex versions lack `app-server` and exit immediately.
+        if let Ok(Some(status)) = server.0.try_wait() {
+            return Err(format!(
+                "Codex ({}) stopped before connecting ({status}). Update Codex to the latest version, then refresh.",
+                path.display()
+            ));
+        }
+        return Err(error);
+    }
     Ok((server, receiver))
 }
 
