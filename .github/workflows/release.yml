@@ -1,0 +1,57 @@
+# Builds the Windows and macOS installers and attaches them to a draft GitHub Release.
+# Run it by pushing a version tag (git tag v0.1.0 && git push origin v0.1.0)
+# or from the Actions tab with "Run workflow".
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: macos-latest # Apple Silicon (M1 and newer)
+            args: --target aarch64-apple-darwin
+          - platform: macos-latest # Intel Macs
+            args: --target x86_64-apple-darwin
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: TokenPulse v__VERSION__
+          releaseBody: |
+            **Windows:** download the `-setup.exe` (or `.msi`) and run it.
+            **Mac:** download the `.dmg` (`aarch64` for Apple Silicon, `x64` for Intel) and drag the app to Applications.
+            The app isn't notarized, so the first time: open it, then go to System Settings → Privacy & Security → Open Anyway.
+            If macOS says the app is damaged, run `xattr -cr /Applications/TokenPulse.app` in Terminal.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
