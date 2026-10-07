@@ -399,11 +399,11 @@ function App() {
         <button className="icon-button refresh-button" disabled={busy || coolingDown || authBusy || !!login} onClick={() => { void refresh(); }} aria-label="Refresh usage" title="Refresh usage">
           <svg viewBox="0 0 24 24" className={busy ? "spin" : ""} aria-hidden="true"><path d="M20 7v5h-5M20 12a8 8 0 1 1-2.3-5.7" /></svg>
         </button>
-        {desktop && <button className="icon-button minimize" aria-label="Minimize widget" title="Minimize to taskbar" onClick={() => {
+        {desktop && <button className="icon-button minimize" aria-label="Hide to tray" title="Hide to tray · click the tray icon to show again" onClick={() => {
           setWindowError("");
-          void getCurrentWindow().minimize().catch(() => setWindowError("Could not minimize the widget. Try minimizing it from the taskbar."));
+          void getCurrentWindow().hide().catch(() => setWindowError("Could not hide the widget. Use Hide in the tray icon menu."));
         }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /></svg></button>}
-        {desktop && <button className="icon-button close" aria-label="Close widget" title="Close widget" onClick={() => { void getCurrentWindow().close().catch(() => setWindowError("Could not close the widget. Use the taskbar to close it.")); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>}
+        {desktop && <button className="icon-button close" aria-label="Quit TokenPulse" title="Quit TokenPulse" onClick={() => { void getCurrentWindow().close().catch(() => setWindowError("Could not close the widget. Use Quit in the tray icon menu.")); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>}
       </header>
 
       {(login || authError || codexError) && <div className="account-controls">

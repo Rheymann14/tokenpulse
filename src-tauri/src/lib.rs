@@ -1,11 +1,19 @@
 mod claude;
 mod codex;
 mod locate;
+mod tray;
 mod usage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            // Keep the widget out of the macOS Dock, matching skipTaskbar on Windows.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            tray::create(app.handle())?;
+            Ok(())
+        })
         .manage(codex::AuthState::default())
         .manage(claude::AuthState::default())
         .plugin(tauri_plugin_opener::init())
