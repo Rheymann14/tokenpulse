@@ -20,6 +20,9 @@ button { font: inherit; }
 .heading { flex: 1; min-width: 0; }
 h1 { font-size: 12px; font-weight: 600; margin: 0; }
 .header-note { font-size: 9px; font-weight: 400; color: #7f8c9e; }
+.plan-badge { margin-left: 5px; padding: 0 6px; border: 1px solid #ffffff26; border-radius: 6px; background: #ffffff0a; color: #a3aebe; font-size: 8.5px; font-weight: 700; line-height: 13px; letter-spacing: .07em; text-transform: uppercase; vertical-align: 1px; cursor: pointer; }
+.plan-badge:hover, .plan-badge[aria-expanded="true"] { border-color: #8fb4ff80; background: linear-gradient(100deg, #529dff22, #f59b5022); color: #e3e9f2; }
+.plan-badge.pro { border: 0; background: linear-gradient(100deg, #6aa9ff, #f59b50); color: #10141b; cursor: default; }
 .icon-button { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; padding: 0; background: transparent; border: 0; border-radius: 4px; color: #8e9aad; cursor: pointer; }
 .icon-button svg { display: block; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .pin-button.is-pinned { color: #78b3ff; background: #529dff18; }
@@ -56,6 +59,28 @@ h3 { margin: 0; font-size: 10px; font-weight: 600; letter-spacing: .07em; text-t
 .account-actions button { border: 1px solid #ffffff25; border-radius: 4px; padding: 3px 5px; background: #ffffff09; color: #c3d2e8; cursor: pointer; font-size: 10px; }
 .account-actions button:disabled { opacity: .4; cursor: default; }
 .connection-note { font-size: 9px; line-height: 12px; color: #8996a9; margin: 5px 0 0; }
+.upgrade-panel { flex-shrink: 0; display: grid; gap: 8px; padding: 8px 10px 10px; border: 1px solid #ffffff14; border-radius: 9px; background: #ffffff05; }
+.upgrade-head { display: flex; align-items: center; justify-content: space-between; }
+.upgrade-head h2 { font-size: 12px; color: #f1f4f8; }
+.upgrade-head .icon-button { margin-right: -5px; }
+.upgrade-lead { margin: -3px 0 0; font-size: 10px; line-height: 14px; color: #9aa6b8; }
+.upgrade-lead strong { display: block; font-weight: 600; color: #e3e9f2; }
+.upgrade-plans { display: grid; border: 1px solid #ffffff14; border-radius: 8px; overflow: hidden; }
+.plan { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border: 0; background: transparent; color: #c3cddb; text-align: left; cursor: pointer; }
+.plan + .plan { border-top: 1px solid #ffffff10; }
+.plan:hover { background: #ffffff07; }
+.plan.selected { background: #529dff14; }
+.plan-radio { flex: 0 0 12px; height: 12px; border: 1.5px solid #6f7c90; border-radius: 50%; }
+.plan.selected .plan-radio { border-color: #78b3ff; background: radial-gradient(circle, #78b3ff 0 2.5px, transparent 3px); }
+.plan-name { font-size: 11px; font-weight: 600; color: #e3e9f2; }
+.plan-save { padding: 0 5px; border-radius: 6px; background: #3ecf8e1f; color: #7fe0b4; font-size: 9px; font-weight: 600; line-height: 14px; }
+.plan-price { margin-left: auto; font-size: 12px; font-weight: 700; color: #f1f4f8; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plan-price small { font-size: 9.5px; font-weight: 400; color: #8e9aad; }
+.upgrade-cta { padding: 6px 8px; border: 0; border-radius: 7px; background: #529dff; color: #0d1117; font-size: 11px; font-weight: 600; cursor: pointer; }
+.upgrade-cta:disabled { background: #ffffff10; color: #8e9aad; cursor: default; }
+.upgrade-switch { justify-self: center; margin-top: -2px; padding: 1px 4px; border: 0; background: transparent; color: #8e9aad; font-size: 10px; cursor: pointer; text-decoration: underline; text-decoration-color: #ffffff30; text-underline-offset: 2px; }
+.upgrade-switch:hover:not(:disabled) { color: #d3dce8; text-decoration-color: currentColor; }
+.upgrade-switch:disabled { opacity: .4; cursor: default; }
 .connection-error { font-size: 10px; line-height: 13px; color: #deb99b; margin: 5px 0 0; overflow-wrap: anywhere; user-select: text; }
 .provider { position: relative; min-width: 0; background: #ffffff04; border: 1px solid #ffffff10; padding: 6px 9px 6px 11px; border-radius: 8px; }
 .provider::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px; border-radius: 0 2px 2px 0; background: var(--accent); opacity: .75; }

@@ -3,30 +3,37 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { currentMonitor, getCurrentWindow, primaryMonitor, type Monitor } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { anchorCompact, captureView, dockCompact, fitDetails, restoreView, type WindowView } from "./windowLayout";
+import { FREE_LIMITS, PLANS, YEARLY_SAVINGS, accountLimit, hasPro, type Billing, type Provider } from "./plan";
 import "./App.css";
 
 type UsageWindow = { label: string; usedPercent: number; resetsAt: number | null };
 type ProviderUsage = { accountEmail: string | null; plan: string | null; source: string; updatedAt: number; windows: UsageWindow[] };
 type Reading = { data?: ProviderUsage; error?: string; loading: boolean; active?: boolean };
-type Provider = "codex" | "claude";
 type Login = { provider: Provider; loginId: string; authUrl: string };
-const cacheKey = "usage-widget.codex-accounts.v2";
+const cacheKey = "usage-widget.accounts.v3";
+const legacyCacheKeys = ["usage-widget.codex-accounts.v2", "usage-widget.codex-accounts.v1"];
 
 function initialReadings(): Record<string, Reading> {
+  // The bare "claude" entry stands in until Claude Code reports which account is signed in.
   const readings: Record<string, Reading> = { claude: { loading: false } };
   try {
-    const cache = JSON.parse(localStorage.getItem(cacheKey) || localStorage.getItem("usage-widget.codex-accounts.v1") || "{}");
-    for (const data of Object.values(cache) as ProviderUsage[]) {
+    const stored = localStorage.getItem(cacheKey);
+    // Older caches held only Codex readings, keyed the same way.
+    const cache = JSON.parse(stored || legacyCacheKeys.map(key => localStorage.getItem(key)).find(Boolean) || "{}");
+    for (const [id, data] of Object.entries(cache) as [string, ProviderUsage][]) {
+      const kind = stored && id.startsWith("claude:") ? "claude" : "codex";
       if (typeof data?.accountEmail === "string" && data.accountEmail.includes("@") && Number.isFinite(data.updatedAt)
         && typeof data.source === "string" && Array.isArray(data.windows) && data.windows.length > 0
         && data.windows.every(window => typeof window.label === "string" && Number.isFinite(window.usedPercent)
           && window.usedPercent >= 0 && window.usedPercent <= 100 && (window.resetsAt === null || Number.isFinite(window.resetsAt)))) {
-        readings[`codex:${data.accountEmail.toLowerCase()}`] = { data, loading: false, active: false };
+        readings[`${kind}:${data.accountEmail.toLowerCase()}`] = { data, loading: false, active: false };
       }
     }
   } catch { /* An unavailable or invalid cache must not block fresh usage. */ }
   return readings;
 }
+
+const accountIds = (readings: Record<string, Reading>, provider: Provider) => Object.keys(readings).filter(id => id.startsWith(`${provider}:`));
 const refreshMs = 120_000;
 const resetTimeZone = "Asia/Manila";
 const resetTimeFormatter = new Intl.DateTimeFormat("en-PH", { timeZone: resetTimeZone, hour: "numeric", minute: "2-digit", hour12: true });
@@ -97,6 +104,12 @@ function App() {
     windowTask.current = next;
     return next;
   }, []);
+  // New hooks stay below the existing ones; the widget tests address hooks by call order.
+  const [pro] = useState(hasPro);
+  // "plan" opens Pro from the header badge, without a limit being hit.
+  const [upgradeFor, setUpgradeFor] = useState<Provider | "plan" | null>(null);
+  const knownAtLogin = useRef<{ provider: Provider; ids: Set<string> } | null>(null);
+  const [billing, setBilling] = useState<Billing>("yearly");
 
   const refresh = useCallback(async (force = false) => {
     if (pending.current || authLock.current || loginRef.current || (!force && Date.now() - lastRefresh.current < 10_000)) return;
@@ -140,19 +153,28 @@ function App() {
           const email = await invoke<string | null>("claude_account").catch(() => undefined);
           if (!mounted.current) return;
           setClaudeEmail(email);
-          if (email === null) {
-            setReadings(previous => ({ ...previous, claude: { loading: false } }));
-            return;
-          }
+          const key = email ? `claude:${email.toLowerCase()}` : "claude";
+          const settle = (reading: Reading) => setReadings(previous => {
+            const next = { ...previous };
+            for (const id of accountIds(next, "claude")) next[id] = { ...next[id], loading: false, active: false };
+            // A known account replaces the placeholder; saved Claude readings stay visible when signed out.
+            if (email || (email === null && accountIds(next, "claude").length)) delete next.claude;
+            else if (email === null) next.claude = { loading: false };
+            if (email !== null) next[key] = { ...next[key], ...reading };
+            return next;
+          });
+          settle({ loading: true, active: true, error: undefined });
+          if (email === null) return;
           const data = await invoke<ProviderUsage>("claude_usage");
-          if (mounted.current) setReadings(previous => ({ ...previous, claude: { data, loading: false } }));
+          // Claude usage does not name its account; the CLI status does.
+          if (mounted.current) settle({ data: { ...data, accountEmail: email ?? data.accountEmail }, loading: false, active: true, error: undefined });
         }
       } catch (error) {
         const message = String(error instanceof Error ? error.message : error);
         if (mounted.current && id === "codex") setCodexError(message);
         if (mounted.current) setReadings(previous => {
           const next = { ...previous };
-          for (const key of Object.keys(next).filter(key => id === "codex" ? key.startsWith("codex:") : key === "claude")) {
+          for (const key of Object.keys(next).filter(key => id === "codex" ? key.startsWith("codex:") : key === "claude" || (key.startsWith("claude:") && next[key].active))) {
             next[key] = { ...previous[key], error: message, loading: false };
           }
           return next;
@@ -184,12 +206,63 @@ function App() {
     finally { authLock.current = false; setAuthBusy(false); }
   };
 
+  const providerName = (provider: Provider) => provider === "codex" ? "Codex" : "Claude";
+  const usedAll = (provider: Provider) => {
+    const limit = FREE_LIMITS[provider];
+    return `You've used ${limit === 1 ? "your" : limit === 2 ? "both" : `all ${limit}`} free ${providerName(provider)} account${limit === 1 ? "" : "s"}.`;
+  };
+  const atLimit = (provider: Provider) => accountIds(readings, provider).length >= accountLimit(provider, pro);
+
+  // Signing in again also switches between saved accounts, so the limit is checked again once the account is known.
+  const signIn = (provider: Provider) => {
+    knownAtLogin.current = { provider, ids: new Set(accountIds(readings, provider)) };
+    setUpgradeFor(null);
+    void connect(provider);
+  };
+
+  const addAccount = (provider: Provider) => {
+    if (atLimit(provider)) {
+      setAuthError("");
+      setUpgradeFor(provider);
+      return;
+    }
+    signIn(provider);
+  };
+
+  // Signs a newly added account back out when the free plan's limit was already reached.
+  const enforceLimit = async (provider: Provider) => {
+    const known = knownAtLogin.current;
+    knownAtLogin.current = null;
+    if (!known || known.provider !== provider || known.ids.size < accountLimit(provider, pro)) return;
+    await refreshDone.current;
+    if (authLock.current) return;
+    authLock.current = true;
+    setAuthBusy(true);
+    try {
+      const email = await invoke<string | null>(`${provider}_account`);
+      const id = email ? `${provider}:${email.toLowerCase()}` : null;
+      if (!email || !id || known.ids.has(id)) return;
+      await invoke(`${provider}_logout`, { expectedEmail: email });
+      (provider === "codex" ? setActiveEmail : setClaudeEmail)(null);
+      setReadings(previous => {
+        const next = { ...previous };
+        delete next[id];
+        if (provider === "claude" && !accountIds(next, "claude").length) next.claude = { loading: false };
+        return next;
+      });
+      setUpgradeFor(provider);
+      setAuthError(`${email} was signed out. The free plan includes ${FREE_LIMITS[provider]} ${providerName(provider)} account${FREE_LIMITS[provider] === 1 ? "" : "s"}.`);
+    } catch (error) { setAuthError(String(error)); }
+    finally { authLock.current = false; setAuthBusy(false); }
+  };
+
   const cancelLogin = async () => {
     if (!loginRef.current || authLock.current) return;
     authLock.current = true;
     setAuthBusy(true);
     try {
       await invoke(`${loginRef.current.provider}_login_cancel`, { loginId: loginRef.current.loginId });
+      knownAtLogin.current = null;
       loginRef.current = null;
       setLogin(null);
       setAuthError("");
@@ -227,21 +300,25 @@ function App() {
         setSelectedAccount(null);
         return;
       }
-      const email = accountId.slice("codex:".length);
-      const installedEmail = await invoke<string | null>("codex_account");
+      const provider: Provider = accountId.startsWith("claude:") ? "claude" : "codex";
+      const email = accountId.slice(provider.length + 1);
+      const installedEmail = await invoke<string | null>(`${provider}_account`);
+      const setInstalled = provider === "codex" ? setActiveEmail : setClaudeEmail;
       if (installedEmail?.toLowerCase() === email) {
-        await invoke("codex_logout", { expectedEmail: email });
-        setActiveEmail(null);
-        setCodexError("");
+        await invoke(`${provider}_logout`, { expectedEmail: email });
+        setInstalled(null);
+        if (provider === "codex") setCodexError("");
       } else {
-        setActiveEmail(installedEmail);
+        setInstalled(installedEmail);
       }
       setReadings(previous => {
         const next = { ...previous };
         delete next[accountId];
-        for (const id of Object.keys(next).filter(id => id.startsWith("codex:"))) {
-          next[id] = { ...next[id], active: installedEmail?.toLowerCase() !== email && id === `codex:${installedEmail?.toLowerCase()}` };
+        for (const id of accountIds(next, provider)) {
+          next[id] = { ...next[id], active: installedEmail?.toLowerCase() !== email && id === `${provider}:${installedEmail?.toLowerCase()}` };
         }
+        // Keep a Claude card on screen so its Sign in button stays reachable.
+        if (provider === "claude" && !accountIds(next, "claude").length) next.claude = { loading: false };
         return next;
       });
       setSelectedAccount(null);
@@ -336,10 +413,11 @@ function App() {
           loginRef.current = null;
           setLogin(null);
           setAuthError("");
-          void refresh(true);
+          void refresh(true).then(() => enforceLimit(login.provider));
         }
       } catch (error) {
         if (!stopped) {
+          knownAtLogin.current = null;
           loginRef.current = null;
           setLogin(null);
           setAuthError(String(error));
@@ -361,25 +439,26 @@ function App() {
   useEffect(() => {
     try {
       localStorage.setItem(cacheKey, JSON.stringify(Object.fromEntries(Object.entries(readings)
-        .filter(([id, reading]) => id.startsWith("codex:") && reading.data)
+        .filter(([id, reading]) => (id.startsWith("codex:") || id.startsWith("claude:")) && reading.data)
         .map(([id, reading]) => [id, reading.data]))));
-      localStorage.removeItem("usage-widget.codex-accounts.v1");
+      for (const key of legacyCacheKeys) localStorage.removeItem(key);
     } catch { /* Keep monitoring when local storage is unavailable. */ }
   }, [readings]);
 
-  // The signed-in Codex account leads; saved accounts follow, most recently read first.
-  const isLive = (id: string) => !!readings[id].active && id === `codex:${activeEmail?.toLowerCase()}`;
-  const codexIds = Object.keys(readings).filter(id => id.startsWith("codex:"))
-    .sort((a, b) => Number(isLive(b)) - Number(isLive(a)) || (readings[b].data?.updatedAt ?? 0) - (readings[a].data?.updatedAt ?? 0));
-  const providers = [
-    ...codexIds.map(id => ({ id, name: "Codex", kind: "codex", mark: "◎", email: readings[id].data?.accountEmail || id.slice(6) })),
-    { id: "claude", name: "Claude Code", kind: "claude", mark: "✳", email: claudeEmail ?? null },
-  ];
-  const claudeSignedOut = desktop && claudeEmail === null && !readings.claude.loading;
-  const claudeCanSignIn = claudeSignedOut || (desktop && !!readings.claude.error && !readings.claude.data);
+  // The signed-in account leads; saved accounts follow, most recently read first.
+  const liveEmail = { codex: activeEmail, claude: claudeEmail };
+  const isLive = (id: string, provider: Provider) => !!readings[id].active && id === `${provider}:${liveEmail[provider]?.toLowerCase()}`;
+  const sortedIds = (provider: Provider) => accountIds(readings, provider)
+    .sort((a, b) => Number(isLive(b, provider)) - Number(isLive(a, provider)) || (readings[b].data?.updatedAt ?? 0) - (readings[a].data?.updatedAt ?? 0));
+  const account = (id: string, provider: Provider) => ({ id, name: provider === "codex" ? "Codex" : "Claude Code", kind: provider,
+    email: readings[id].data?.accountEmail || id.slice(provider.length + 1) });
+  const claudePlaceholder = "claude" in readings ? [{ id: "claude", name: "Claude Code", kind: "claude" as const, email: claudeEmail ?? null }] : [];
+  const placeholder = readings.claude;
+  const claudeSignedOut = desktop && claudeEmail === null && !placeholder?.loading;
+  const claudeCanSignIn = claudeSignedOut || (desktop && !!placeholder?.error && !placeholder.data);
   const groups = [
-    { kind: "codex", name: "Codex", mark: "◎", items: providers.filter(provider => provider.kind === "codex") },
-    { kind: "claude", name: "Claude Code", mark: "✳", items: providers.filter(provider => provider.kind === "claude") },
+    { kind: "codex" as const, name: "Codex", mark: "◎", items: sortedIds("codex").map(id => account(id, "codex")) },
+    { kind: "claude" as const, name: "Claude Code", mark: "✳", items: [...claudePlaceholder, ...sortedIds("claude").map(id => account(id, "claude"))] },
   ];
   const busy = refreshing || Object.values(readings).some(reading => reading.loading);
   const coolingDown = now - lastRefresh.current < 10_000;
@@ -389,7 +468,12 @@ function App() {
       <div className="widget-content" ref={contentRef}>
       <header className="header" data-tauri-drag-region={!pinned || undefined}>
         <div className="heading" data-tauri-drag-region={!pinned || undefined}>
-          <h1 data-tauri-drag-region={!pinned || undefined}>{pinned ? "AI usage" : "TokenPulse"} {!pinned && <span className="header-note" data-tauri-drag-region>· auto 2 min</span>}</h1>
+          <h1 data-tauri-drag-region={!pinned || undefined}>{pinned ? "AI usage" : "TokenPulse"}
+            {!pinned && (pro ? <span className="plan-badge pro" title="TokenPulse Pro · unlimited accounts">Pro</span>
+              : <button className="plan-badge" aria-label="Free plan · see Pro" aria-expanded={upgradeFor !== null}
+                title={`Free plan · ${FREE_LIMITS.codex} Codex + ${FREE_LIMITS.claude} Claude account. Click to see Pro.`}
+                onClick={() => { setAuthError(""); setUpgradeFor(upgradeFor ? null : "plan"); }}>Free</button>)}
+            {" "}{!pinned && <span className="header-note" data-tauri-drag-region>· auto 2 min</span>}</h1>
         </div>
         {desktop && <button className={`icon-button pin-button${pinned ? " is-pinned" : ""}`} disabled={pinBusy}
           onClick={() => { void togglePin(); }} aria-label={pinned ? "Unpin and show details" : "Pin compact widget to bottom right"}
@@ -425,29 +509,61 @@ function App() {
         {authError && <p className="connection-error" role="status" title={authError}>{authError}</p>}
         {codexError && <p className="connection-error" role="status" title={codexError}>{codexError}</p>}
       </div>}
+      {upgradeFor && !pinned && <div className="upgrade-panel" role="dialog" aria-label="TokenPulse Pro">
+        <div className="upgrade-head">
+          <h2 aria-label="Upgrade to Pro">Upgrade to<span className="plan-badge pro" aria-hidden="true">Pro</span></h2>
+          <button className="icon-button" aria-label="Close upgrade" title="Close" onClick={() => setUpgradeFor(null)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+          </button>
+        </div>
+        <p className="upgrade-lead">
+          {upgradeFor !== "plan" && <strong>{usedAll(upgradeFor)}</strong>}
+          Free includes {FREE_LIMITS.codex} Codex + {FREE_LIMITS.claude} Claude account. Pro removes the limit.
+        </p>
+        <div className="upgrade-plans" role="radiogroup" aria-label="Billing period">
+          {(Object.keys(PLANS) as Billing[]).map(id => <button key={id} role="radio" aria-checked={billing === id}
+            className={`plan${billing === id ? " selected" : ""}`} onClick={() => setBilling(id)}>
+            <span className="plan-radio" aria-hidden="true" />
+            <span className="plan-name">{PLANS[id].name}</span>
+            {id === "yearly" && <span className="plan-save">Save {YEARLY_SAVINGS}%</span>}
+            <span className="plan-price">${PLANS[id].amount}<small> / {PLANS[id].per}</small></span>
+          </button>)}
+        </div>
+        <button className="upgrade-cta" disabled title="Payments are coming soon">Get Pro · coming soon</button>
+        {upgradeFor !== "plan" && <button className="upgrade-switch" disabled={busy || authBusy || !!login} onClick={() => signIn(upgradeFor)}
+          title={`Sign in again to one of your saved ${providerName(upgradeFor)} accounts`}>Switch to a saved account</button>}
+      </div>}
       <div className="providers">
-        {groups.map(group => (
+        {groups.map(group => {
+        const count = accountIds(readings, group.kind).length;
+        const limited = atLimit(group.kind);
+        const addTitle = limited ? "Free plan limit reached. Upgrade for unlimited accounts."
+          : `Switch / add ${group.name} account. Uses the shared ${group.name} CLI / IDE login.`;
+        return (
         <div className={`provider-group ${group.kind}`} key={group.kind}>
           <div className="group-heading">
             <span className="group-mark" aria-hidden="true">{group.mark}</span>
             <h3>{group.name}</h3>
-            {!pinned && group.items.length > 1 && <span className="group-count">{group.items.length} accounts</span>}
-            {!pinned && group.kind === "codex" && <button className="group-action" disabled={!desktop || busy || authBusy || !!login}
-              onClick={() => { void connect("codex"); }} aria-label="Switch or add Codex account"
-              title="Switch / add Codex account. Uses the shared Codex CLI / IDE login.">+ Add account</button>}
+            {!pinned && (pro ? count > 1 && <span className="group-count">{count} accounts</span>
+              : count > 0 && <span className="group-count" title={`Free plan: up to ${FREE_LIMITS[group.kind]} ${group.name} account${FREE_LIMITS[group.kind] === 1 ? "" : "s"}`}>
+                {count}/{FREE_LIMITS[group.kind]}
+              </span>)}
+            {!pinned && (group.kind === "codex" || (claudeEmail && !claudeCanSignIn)) && <button className="group-action" disabled={!desktop || busy || authBusy || !!login}
+              onClick={() => addAccount(group.kind)} aria-label={`Switch or add ${group.name} account`} title={addTitle}>+ Add account</button>}
             {!pinned && group.kind === "claude" && claudeCanSignIn && <button className="group-action" disabled={busy || authBusy || !!login}
-              onClick={() => { void connect("claude"); }} aria-label="Sign in to Claude Code"
-              title="Sign in with your Claude subscription (shared with Claude Code CLI / IDE)">
+              onClick={() => addAccount("claude")} aria-label="Sign in to Claude Code"
+              title={limited ? addTitle : "Sign in with your Claude subscription (shared with Claude Code CLI / IDE)"}>
               {login?.provider === "claude" ? "Signing in…" : "Sign in"}
             </button>}
           </div>
           <div className="provider-cards">
-          {!group.items.length && <p className="empty-state group-empty">{busy ? "Checking Codex account…" : "No Codex account connected."}</p>}
+          {!group.items.length && <p className="empty-state group-empty">{busy ? `Checking ${group.name} account…` : `No ${group.name} account connected.`}</p>}
           {group.items.map(provider => {
           const { data, error, loading, active } = readings[provider.id];
-          const saved = provider.kind === "codex" && (!active || activeEmail?.toLowerCase() !== provider.email?.toLowerCase());
+          const placeholderCard = provider.id === "claude";
+          const saved = !placeholderCard && (!active || liveEmail[provider.kind]?.toLowerCase() !== provider.email?.toLowerCase());
           const stale = !!data && (saved || now - data.updatedAt * 1000 > 15 * 60_000 || !!error);
-          const selectable = provider.kind === "codex" || !!provider.email;
+          const selectable = !placeholderCard || !!provider.email;
           const selected = selectable && selectedAccount === provider.id;
           const status = !data ? null : saved ? "saved" : stale ? "stale" : "live";
           const statusTitle = status === "live" ? "Signed in · live usage"
@@ -502,7 +618,8 @@ function App() {
           })}
           </div>
         </div>
-        ))}
+        );
+        })}
       </div>
       {windowError && <p className="error-message" role="status" title={windowError}>{windowError}</p>}
       </div>
